@@ -3,6 +3,7 @@
 from . import *
 
 import json
+from copy import copy
 
 from twisted.trial.unittest import TestCase
 
@@ -20,7 +21,6 @@ from vulcan.httpserver import (HTTPFactory, RestrictedChannel,
 from vulcan.utils import to_utf8
 from vulcan import httpserver
 from vulcan import httpserver as hs
-from vulcan import throttling
 from vulcan.routing import AuthResponse, Upstream
 
 
@@ -63,11 +63,9 @@ class HTTPServerTest(TestCase):
         self.assertEquals(0, processWhenReady.call_count)
 
     @patch.object(reactor, 'connectTCP')
-    @patch.object(throttling, 'get_upstream')
     @patch.object(httpserver.auth, 'authorize')
-    def test_success(self, authorize, get_upstream, connectTCP):
+    def test_success(self, authorize, connectTCP):
         authorize.return_value = defer.succeed(_auth_response)
-        get_upstream.return_value = defer.succeed(_auth_response.upstreams[0])
 
         self.protocol.dataReceived("GET /foo/bar HTTP/1.1\r\n")
         self.protocol.dataReceived("Authorization: Basic YXBpOmFwaWtleQ==\r\n")
@@ -87,15 +85,12 @@ class HTTPServerTest(TestCase):
 
 
     @patch.object(reactor, 'connectTCP')
-    @patch.object(throttling, 'get_upstream')
     @patch.object(httpserver.auth, 'authorize')
-    def test_success_with_headers(self, authorize, get_upstream, connectTCP):
+    def test_success_with_headers(self, authorize, connectTCP):
         """Makes sure headers from upstream are set when request
         is successfully proxied.
         """
         authorize.return_value = defer.succeed(_auth_response_with_headers)
-        get_upstream.return_value = defer.succeed(
-            _auth_response_with_headers.upstreams[0])
 
         self.protocol.dataReceived("GET /foo/bar HTTP/1.1\r\n")
         self.protocol.dataReceived("Authorization: Basic YXBpOmFwaWtleQ==\r\n")
@@ -118,9 +113,7 @@ class HTTPServerTest(TestCase):
                 'X-My-Header': ['Value', to_utf8(u'Юникод')]}, factory.headers)
 
     @patch.object(reactor, 'connectTCP')
-    @patch.object(throttling, 'get_upstream')
     def test_request_received_before_checks(self,
-                                            get_upstream,
                                             connectTCP):
         self.clock = task.Clock()
 
@@ -130,9 +123,6 @@ class HTTPServerTest(TestCase):
             return d
 
         with patch.object(httpserver.auth, 'authorize', delayed_auth):
-            get_upstream.return_value = defer.succeed(
-                _auth_response.upstreams[0])
-
             self.protocol.dataReceived("GET /foo/bar HTTP/1.1\r\n")
             self.protocol.dataReceived(
                 "Authorization: Basic YXBpOmFwaWtleQ==\r\n")
@@ -147,12 +137,11 @@ class HTTPServerTest(TestCase):
             self.assertEquals(_auth_response.upstreams[0].port,
                               connectTCP.call_args[0][1])
 
-    @patch.object(throttling, 'get_upstream')
     @patch.object(httpserver.auth, 'authorize')
-    def test_clientConnectionFailed(self, authorize, get_upstream):
-        authorize.return_value = defer.succeed(_auth_response)
-
-        get_upstream.return_value = defer.succeed(_bad_upstream)
+    def test_clientConnectionFailed(self, authorize):
+        r = copy(_auth_response)
+        r.upstreams = [_bad_upstream]
+        authorize.return_value = defer.succeed(r)
 
         # had to overwrite factories/protocols for testing purposes
         # mocks set before reactor.callLater() won't work afterwords
@@ -212,29 +201,6 @@ class HTTPServerTest(TestCase):
         self.protocol.dataReceived("\r\n")
 
         self.assertTrue(log_err.called)
-
-    @patch.object(DynamicallyRoutedRequest, 'processWhenReady')
-    @patch.object(throttling, 'get_upstream')
-    @patch.object(httpserver.auth, 'authorize')
-    def test_rate_limit_reached(self, authorize,
-                                get_upstream, processWhenReady):
-        authorize.return_value = defer.succeed(_auth_response)
-
-        get_upstream.side_effect = lambda *args: defer.fail(
-            RateLimitReached(retry_seconds=10))
-
-        self.protocol.dataReceived("GET /foo/bar HTTP/1.1\r\n")
-        self.protocol.dataReceived("Authorization: Basic YXBpOmFwaWtleQ==\r\n")
-        self.protocol.dataReceived("\r\n")
-
-        status_line = self.transport.value().splitlines()[0]
-        self.assertEquals(
-            "HTTP/1.1 {code} {message}".format(
-                code=TOO_MANY_REQUESTS,
-                message=RESPONSES[TOO_MANY_REQUESTS]),
-            status_line)
-
-        self.assertEquals(0, processWhenReady.call_count)
 
 
 _auth_response = AuthResponse.from_json(

@@ -54,9 +54,6 @@ def main():
     from twisted.internet import reactor
 
     from vulcan.httpserver import HTTPFactory
-    from vulcan import cassandra
-
-    cassandra.pool.startService()
     reactor.listenTCP(args.http_port, HTTPFactory())
     reactor.suggestThreadPoolSize(10)
     reactor.run()

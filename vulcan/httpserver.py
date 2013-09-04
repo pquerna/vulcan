@@ -1,6 +1,7 @@
 # -*- test-case-name: vulcan.test.test_httpserver -*-
 
 from urlparse import urlparse
+import random
 
 from twisted.web.http import (HTTPChannel, HTTPFactory as StandardHTTPFactory,
                               UNAUTHORIZED, SERVICE_UNAVAILABLE)
@@ -11,11 +12,7 @@ from twisted.python import log
 
 from vulcan import auth
 from vulcan import config
-from vulcan import throttling
-from vulcan.errors import (TOO_MANY_REQUESTS,
-                           RESPONSES,
-                           RateLimitReached,
-                           AuthorizationFailed)
+from vulcan.errors import RESPONSES, AuthorizationFailed
 
 from vulcan.utils import safe_format
 from vulcan.routing import AuthRequest
@@ -53,8 +50,7 @@ class RestrictedChannel(HTTPChannel):
         try:
             _request = AuthRequest.from_http_request(request)
             r = yield self.auth.authorize(_request)
-
-            upstream = yield throttling.get_upstream(r)
+            upstream = random.choice(r.upstreams)
 
             request.factory = upstream
             request.processWhenReady()
@@ -63,15 +59,6 @@ class RestrictedChannel(HTTPChannel):
             log.msg("Authorization failed: %s" % (_request,))
             request.setResponseCode(e.status, e.message)
             request.write(e.response or "")
-            request.finishUnreceived()
-
-        except RateLimitReached, e:
-            log.msg("Rate limiting: %s" % (_request,))
-            request.setResponseCode(
-                TOO_MANY_REQUESTS,
-                RESPONSES[TOO_MANY_REQUESTS])
-            request.setHeader(RETRY_IN_SECONDS, str(e.retry_seconds))
-            request.write(str(e))
             request.finishUnreceived()
 
         except Exception:
