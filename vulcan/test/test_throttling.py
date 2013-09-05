@@ -111,25 +111,25 @@ class ThrottlingTest(TestCase):
                              _auth_response.upstreams[0])
         self.assertTrue(log.err.called)
 
-    @patch.object(log, 'err')
-    def test_update_rates_crash(self, log_err):
+    @patch.object(throttling.log, 'err')
+    @patch.object(throttling, '_is_throttled')
+    @patch.object(throttling.client, 'execute_cql3_query')
+    def test_update_rates_crash(self, update_query, _is_throttled, log_err):
         """
         Test that if updating rates crashes rate limit check still passes.
         """
-        with patch.object(throttling.client, 'execute_cql3_query') as query:
-            f = Failure(Exception("Bam!"))
-            query.return_value = defer.fail(f)
-            _crashing_update_rates = throttling._update_rates
+        _is_throttled.side_effect = lambda *args, **kwargs: ThrottledRate(
+            rate=Rate(value=300, period="minute"), count=2)
 
-        with patch.object(throttling.client, 'execute_cql3_query') as query:
-            query.side_effect = lambda *args, **kwargs: defer.succeed(
-                _2_hits)
+        f = Failure(Exception("Bam!"))
+        update_query.side_effect = lambda *args, **kwargs: defer.fail(f)
 
-            with patch.object(throttling, '_update_rates') as _update_rates:
-                _update_rates.side_effect = _crashing_update_rates
-                self.successResultOf(get_upstream(_auth_response),
-                                     _auth_response.upstreams[0])
-                log_err.assert_called_once_with(f)
+        self.successResultOf(get_upstream(_auth_response),
+                             _auth_response.upstreams[0])
+        # there should be 2 calls:
+        # * when we update token rate
+        # * when we update upstream rate
+        self.assertEquals([call(f), call(f)], log_err.call_args_list)
 
     @patch.object(cassandra, 'CONN_TIMEOUT', 10)
     @patch.object(log, 'err')
