@@ -10,6 +10,7 @@ import (
 	"github.com/mailgun/vulcan/discovery"
 	"github.com/mailgun/vulcan/netutils"
 	"github.com/robertkrimen/otto"
+	"github.com/stretchr/hoard"
 	"net/http"
 	"runtime/debug"
 )
@@ -26,6 +27,36 @@ type JsController struct {
 	Client client.Client
 }
 
+func (ctrl *JsController) getOttoFromCache() (*otto.Otto, error) {
+	hash, err := ctrl.CodeGetter.GetHash()
+	if err != nil {
+		return nil, err
+	}
+
+	o, err := hoard.GetWithError(hash, func() (interface{}, error, *hoard.Expiration) {
+		expires := hoard.Expires().AfterSeconds(20)
+		code, err := ctrl.CodeGetter.GetCode()
+		if err != nil {
+			return nil, err, expires
+		}
+
+		Otto := otto.New()
+		ctrl.registerBuiltins(Otto)
+
+		_, err = Otto.Run(code)
+
+		if err != nil {
+			return nil, err, expires
+		}
+		return Otto, nil, expires
+	})
+	if err != nil {
+		return nil, err
+	} else {
+		return o.(*otto.Otto), nil
+	}
+}
+
 func (ctrl *JsController) GetInstructions(req *http.Request) (interface{}, error) {
 	var instr interface{}
 	err := fmt.Errorf("Internal system error")
@@ -36,14 +67,8 @@ func (ctrl *JsController) GetInstructions(req *http.Request) (interface{}, error
 			instr = nil
 		}
 	}()
-	code, err := ctrl.CodeGetter.GetCode()
-	if err != nil {
-		return nil, err
-	}
-	Otto := otto.New()
-	ctrl.registerBuiltins(Otto)
 
-	_, err = Otto.Run(code)
+	Otto, err := ctrl.getOttoFromCache()
 	if err != nil {
 		return nil, err
 	}
