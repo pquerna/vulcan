@@ -27,7 +27,32 @@ type JsController struct {
 	Client client.Client
 }
 
+func (ctrl *JsController) getOtto() (*otto.Otto, error) {
+	code, err := ctrl.CodeGetter.GetCode()
+	if err != nil {
+		return nil, err
+	}
+
+	Otto := otto.New()
+	ctrl.registerBuiltins(Otto)
+
+	_, err = Otto.Run(code)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return Otto, nil
+}
+
+const SKIP_OTTO_CACHE = false
+
 func (ctrl *JsController) getOttoFromCache() (*otto.Otto, error) {
+
+	if SKIP_OTTO_CACHE {
+		return ctrl.getOtto()
+	}
+
 	hash, err := ctrl.CodeGetter.GetHash()
 	if err != nil {
 		return nil, err
@@ -35,21 +60,10 @@ func (ctrl *JsController) getOttoFromCache() (*otto.Otto, error) {
 
 	o, err := hoard.GetWithError(hash, func() (interface{}, error, *hoard.Expiration) {
 		expires := hoard.Expires().AfterSeconds(20)
-		code, err := ctrl.CodeGetter.GetCode()
-		if err != nil {
-			return nil, err, expires
-		}
-
-		Otto := otto.New()
-		ctrl.registerBuiltins(Otto)
-
-		_, err = Otto.Run(code)
-
-		if err != nil {
-			return nil, err, expires
-		}
-		return Otto, nil, expires
+		Otto, err := ctrl.getOtto()
+		return Otto, err, expires
 	})
+
 	if err != nil {
 		return nil, err
 	} else {
@@ -72,6 +86,7 @@ func (ctrl *JsController) GetInstructions(req *http.Request) (interface{}, error
 	if err != nil {
 		return nil, err
 	}
+
 	handler, err := Otto.Get("handle")
 	if err != nil {
 		return nil, err
@@ -99,19 +114,12 @@ func (ctrl *JsController) ConvertError(req *http.Request, inError error) (respon
 			glog.Errorf("Recovered: %v %s", r, debug.Stack())
 		}
 	}()
-	code, err := ctrl.CodeGetter.GetCode()
-	if err != nil {
-		glog.Errorf("Error getting code: %s", err)
-		return response, err
-	}
-	Otto := otto.New()
-	ctrl.registerBuiltins(Otto)
 
-	_, err = Otto.Run(code)
+	Otto, err := ctrl.getOttoFromCache()
 	if err != nil {
-		glog.Errorf("Error running code %s: %s", code, err)
-		return response, err
+		return nil, err
 	}
+
 	handler, err := Otto.Get("handleError")
 	if err != nil {
 		return nil, err

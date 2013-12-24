@@ -57,13 +57,15 @@ func (fg *FileGetter) GetCode() (string, error) {
 	return fg.contents, nil
 }
 
+const SKIP_FILE_CACHE = false
+
 func (fg *FileGetter) GetHash() (string, error) {
 	st, err := os.Stat(fg.path)
 	if err != nil {
 		return "", err
 	}
 
-	if fg.laststat == nil || st.Size() != fg.laststat.Size() || st.ModTime() != fg.laststat.ModTime() {
+	if SKIP_FILE_CACHE || fg.laststat == nil || st.Size() != fg.laststat.Size() || st.ModTime() != fg.laststat.ModTime() {
 		fg.laststat = st
 
 		code, err := ioutil.ReadFile(fg.path)
