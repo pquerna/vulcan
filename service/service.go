@@ -20,6 +20,7 @@ import (
 	"github.com/mailgun/vulcan/loadbalance/roundrobin"
 	"github.com/mailgun/vulcan/metrics"
 	"github.com/mailgun/vulcan/timeutils"
+	"github.com/mailgun/vulcan/vmod"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -30,9 +31,10 @@ import (
 )
 
 type Service struct {
-	options *serviceOptions
-	proxy   *vulcan.ReverseProxy
-	metrics metrics.ProxyMetrics
+	options  *serviceOptions
+	proxy    *vulcan.ReverseProxy
+	metrics  metrics.ProxyMetrics
+	registry *vmod.Registry
 }
 
 // Initializes service from the command line args
@@ -41,7 +43,8 @@ func NewService() (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{options: options, metrics: metrics.NewProxyMetrics()}, nil
+	return &Service{options: options, metrics: metrics.NewProxyMetrics(),
+		registry: vmod.NewRegistry()}, nil
 }
 
 // This is a blocking call, starts reverse proxy, connects to the backends, etc
@@ -177,10 +180,15 @@ func (s *Service) initProxy() (*vulcan.ReverseProxy, error) {
 		DiscoveryService: discoveryService,
 	}
 
+	bodyBuffer := s.registry.Get("buffer_request_body")
+	handler, err := bodyBuffer.Configure()
+	stack := vmod.NewStack("default", handler)
+
 	proxySettings := &vulcan.ProxySettings{
 		Controller:       controller,
 		ThrottlerBackend: b,
 		LoadBalancer:     loadBalancer,
+		Stack:            stack,
 	}
 
 	proxy, err := vulcan.NewReverseProxy(&s.metrics, proxySettings)

@@ -15,6 +15,7 @@ import (
 	"github.com/mailgun/vulcan/metrics"
 	"github.com/mailgun/vulcan/netutils"
 	"github.com/mailgun/vulcan/ratelimit"
+	"github.com/mailgun/vulcan/vmod"
 	"io"
 	"io/ioutil"
 	"net"
@@ -38,6 +39,8 @@ type ProxySettings struct {
 	HttpReadTimeout time.Duration
 	// How long would proxy try to dial server
 	HttpDialTimeout time.Duration
+	// Default stack to run.
+	Stack *vmod.Stack
 }
 
 // This is a reverse proxy, not meant to be created directly,
@@ -249,23 +252,13 @@ func (p *ReverseProxy) proxyRequest(
 	cmd *command.Forward,
 	endpoints []loadbalance.Endpoint) (int64, error) {
 
-	// We are allowed to fallback in case of upstream failure,
-	// record the request body so we can replay it on errors.
-	body, err := netutils.NewBodyBuffer(req.Body)
-	if err != nil {
-		glog.Errorf("Request read error %s", err)
-		return 0, netutils.NewHttpError(http.StatusBadRequest)
-	}
-
+	body := req.Body.(*netutils.MultiReaderSeek)
 	requestLength, err := body.TotalSize()
 	if err != nil {
 		glog.Errorf("Failed to read stored body length: %s", err)
 		return 0, netutils.NewHttpError(http.StatusInternalServerError)
 	}
-
 	p.metrics.RequestBodySize.Update(requestLength)
-	req.Body = body
-	defer body.Close()
 
 	for i := 0; i < len(endpoints); i++ {
 		_, err := body.Seek(0, 0)

@@ -8,13 +8,11 @@ import (
 	"os"
 )
 
-const MEMORY_BUFFER_LIMIT = 1048576
-
 // Constraints:
 //  - Implements io.Reader
 //  - Implements Seek(0, 0)
 //	- Designed for Write once, Read many times.
-type multiReaderSeek struct {
+type MultiReaderSeek struct {
 	length  int64
 	readers []io.ReadSeeker
 	mr      io.Reader
@@ -23,30 +21,30 @@ type multiReaderSeek struct {
 
 type CleanupFunc func() error
 
-func MultiReaderSeeker(cleanup CleanupFunc, readers ...io.ReadSeeker) *multiReaderSeek {
+func MultiReaderSeeker(cleanup CleanupFunc, readers ...io.ReadSeeker) *MultiReaderSeek {
 	ior := make([]io.Reader, len(readers))
 	for i, arg := range readers {
 		ior[i] = arg.(io.Reader)
 	}
 
-	return &multiReaderSeek{length: -1,
+	return &MultiReaderSeek{length: -1,
 		readers: readers,
 		mr:      io.MultiReader(ior...),
 		cleanup: cleanup}
 }
 
-func (mr *multiReaderSeek) Close() (err error) {
+func (mr *MultiReaderSeek) Close() error {
 	if mr.cleanup != nil {
 		return mr.cleanup()
 	}
 	return nil
 }
 
-func (mr *multiReaderSeek) Read(p []byte) (n int, err error) {
+func (mr *MultiReaderSeek) Read(p []byte) (n int, err error) {
 	return mr.mr.Read(p)
 }
 
-func (mr *multiReaderSeek) TotalSize() (int64, error) {
+func (mr *MultiReaderSeek) TotalSize() (int64, error) {
 	// Unlike traditional .Len() this calcculates the total size of the reader,
 	// not the length remaining.
 	if mr.length >= 0 {
@@ -81,7 +79,7 @@ func (mr *multiReaderSeek) TotalSize() (int64, error) {
 	return mr.length, nil
 }
 
-func (mr *multiReaderSeek) Seek(offset int64, whence int) (int64, error) {
+func (mr *MultiReaderSeek) Seek(offset int64, whence int) (int64, error) {
 	// TODO: implement other whence
 	// TODO: implement real offsets
 
@@ -106,10 +104,10 @@ func (mr *multiReaderSeek) Seek(offset int64, whence int) (int64, error) {
 	return 0, nil
 }
 
-func NewBodyBuffer(input io.Reader) (*multiReaderSeek, error) {
+func NewBodyBuffer(memoryBufferSize int64, input io.Reader) (*MultiReaderSeek, error) {
 	var f *os.File
 	ior := make([]io.ReadSeeker, 0, 2)
-	lr := &io.LimitedReader{input, MEMORY_BUFFER_LIMIT}
+	lr := &io.LimitedReader{input, memoryBufferSize}
 	buffer, err := ioutil.ReadAll(lr)
 
 	if err != nil {
